@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         威软夸克助手
 // @namespace    Weiruan-Quark-Helper
-// @version      1.0.5
+// @version      1.0.6
 // @description  夸克网盘增强下载助手。支持批量下载、直链导出、aria2/IDM/cURL、下载历史、文件过滤、深色模式、快捷键操作。
 // @author       威软科技
 // @license      MIT
@@ -29,7 +29,7 @@
         SHARE_DOWNLOAD_API: "https://drive.quark.cn/1/clouddrive/share/sharepage/download?pr=ucpro&fr=pc",
         UA: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch",
         DEPTH: 25,
-        VERSION: "1.0.5",
+        VERSION: "1.0.6",
         DEBUG: false, // 调试模式
         HISTORY_MAX: 100,
         SHORTCUTS: {
@@ -627,48 +627,36 @@
                 if (isShare) {
                     // 分享页面处理
                     const { pwdId, stoken } = Utils.getShareParams();
-                    if (!pwdId) {
-                        Utils.toast('无法获取分享信息，请刷新页面重试', 'error');
-                        return;
-                    }
+                    console.log('[威软夸克助手] 分享信息:', { pwdId, hasStoken: !!stoken });
 
-                    // 调用分享页面下载 API
-                    res = await Utils.post(CONFIG.SHARE_DOWNLOAD_API, {
-                        pwd_id: pwdId,
-                        stoken: stoken,
-                        fids: files.map(f => f.fid)
-                    });
-                    console.log('[威软夸克助手] 分享下载API返回:', res);
+                    // 方法1: 先尝试标准下载API（如果用户已登录可能直接可用）
+                    console.log('[威软夸克助手] 尝试标准API...');
+                    res = await Utils.post(CONFIG.API, { fids: files.map(f => f.fid) });
+                    console.log('[威软夸克助手] 标准API返回:', res);
 
-                    // 如果返回的是对象而不是数组，尝试提取数据
-                    if (res && res.code === 0 && res.data) {
-                        // 可能返回的是 { data: [...] } 或 { data: { list: [...] } }
-                        if (Array.isArray(res.data)) {
-                            // 已经是数组，不需要处理
-                        } else if (res.data.list && Array.isArray(res.data.list)) {
-                            res.data = res.data.list;
-                        }
-                    }
-
-                    // 如果分享 API 失败，尝试直接获取下载链接
+                    // 方法2: 如果标准API失败，检查文件是否已有下载链接
                     if (!res || res.code !== 0 || !res.data || res.data.length === 0) {
-                        console.log('[威软夸克助手] 分享API未返回数据，尝试直接构建下载链接...');
-                        // 构造一个简单的结果，用文件信息填充
-                        const directFiles = files.map(f => ({
-                            fid: f.fid,
-                            file_name: f.name,
-                            size: f.size || 0,
-                            download_url: f.download_url || null
-                        })).filter(f => f.download_url);
+                        console.log('[威软夸克助手] 标准API未返回数据，检查文件自带的下载链接...');
+                        const filesWithUrl = files.filter(f => f.download_url);
+                        console.log('[威软夸克助手] 已有下载链接的文件数:', filesWithUrl.length);
 
-                        if (directFiles.length > 0) {
-                            res = { code: 0, data: directFiles };
-                        } else {
-                            // 最后尝试：提示用户
-                            const errMsg = res?.message || '分享文件可能需要先保存到网盘';
-                            Utils.toast(errMsg, 'error');
-                            return;
+                        if (filesWithUrl.length > 0) {
+                            res = {
+                                code: 0,
+                                data: filesWithUrl.map(f => ({
+                                    fid: f.fid,
+                                    file_name: f.name,
+                                    size: f.size || 0,
+                                    download_url: f.download_url
+                                }))
+                            };
                         }
+                    }
+
+                    // 最终检查
+                    if (!res || res.code !== 0 || !res.data || res.data.length === 0) {
+                        Utils.toast('分享文件需要先「保存到网盘」后才能获取下载链接', 'info');
+                        return;
                     }
                 } else {
                     // 个人网盘处理
