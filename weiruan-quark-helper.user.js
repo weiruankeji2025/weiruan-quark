@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         威软夸克助手
 // @namespace    Weiruan-Quark-Helper
-// @version      1.0.0
+// @version      1.0.1
 // @description  夸克网盘增强下载助手。支持批量下载、直链导出、aria2/IDM/cURL、下载历史、文件过滤、深色模式、快捷键操作。
 // @author       威软科技
 // @license      MIT
@@ -26,7 +26,8 @@
         API: "https://drive.quark.cn/1/clouddrive/file/download?pr=ucpro&fr=pc",
         UA: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch",
         DEPTH: 25,
-        VERSION: "1.0.0",
+        VERSION: "1.0.1",
+        DEBUG: false, // 调试模式
         HISTORY_MAX: 100,
         SHORTCUTS: {
             DOWNLOAD: 'ctrl+d',
@@ -176,30 +177,98 @@
 
     // ==================== 工具函数 ====================
     const Utils = {
+        log: (...args) => {
+            if (CONFIG.DEBUG) {
+                console.log('[威软夸克助手]', ...args);
+            }
+        },
+
+        // 从 React Fiber 中提取文件信息
         getFidFromFiber: (dom) => {
             if (!dom) return null;
-            const key = Object.keys(dom).find(k => k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$'));
-            if (!key) return null;
 
-            let fiber = dom[key];
-            let attempts = 0;
+            // 尝试从当前元素及其父元素查找
+            let currentDom = dom;
+            for (let domAttempt = 0; domAttempt < 10 && currentDom; domAttempt++) {
+                const key = Object.keys(currentDom).find(k =>
+                    k.startsWith('__reactFiber$') ||
+                    k.startsWith('__reactInternalInstance$') ||
+                    k.startsWith('__reactProps$')
+                );
 
-            while (fiber && attempts < CONFIG.DEPTH) {
-                const props = fiber.memoizedProps || fiber.pendingProps;
-                const candidate = props?.record || props?.file || props?.item || props?.data || props?.node;
+                if (key) {
+                    let fiber = currentDom[key];
+                    let attempts = 0;
 
-                if (candidate && (candidate.fid || candidate.id)) {
-                    return {
-                        fid: candidate.fid || candidate.id,
-                        name: candidate.file_name || candidate.name || candidate.title || "未命名文件",
-                        isDir: candidate.dir === true || candidate.is_dir === true || candidate.type === 'folder',
-                        size: candidate.size || 0,
-                        download_url: candidate.download_url
-                    };
+                    while (fiber && attempts < CONFIG.DEPTH) {
+                        const props = fiber.memoizedProps || fiber.pendingProps || fiber;
+
+                        // 尝试多种可能的属性名
+                        const candidates = [
+                            props?.record,
+                            props?.file,
+                            props?.item,
+                            props?.data,
+                            props?.node,
+                            props?.fileInfo,
+                            props?.fileData,
+                            props?.children?.props?.record,
+                            props?.children?.props?.file,
+                            fiber?.memoizedState?.memoizedState,
+                            fiber?.stateNode?.props?.record,
+                            fiber?.stateNode?.props?.file
+                        ].filter(Boolean);
+
+                        for (const candidate of candidates) {
+                            if (candidate && (candidate.fid || candidate.id || candidate.file_id)) {
+                                const fileData = {
+                                    fid: candidate.fid || candidate.id || candidate.file_id,
+                                    name: candidate.file_name || candidate.name || candidate.title || candidate.fileName || "未命名文件",
+                                    isDir: candidate.dir === true || candidate.is_dir === true || candidate.type === 'folder' || candidate.file_type === 0,
+                                    size: candidate.size || candidate.file_size || 0,
+                                    download_url: candidate.download_url
+                                };
+                                Utils.log('找到文件:', fileData);
+                                return fileData;
+                            }
+                        }
+
+                        fiber = fiber.return;
+                        attempts++;
+                    }
                 }
-                fiber = fiber.return;
-                attempts++;
+                currentDom = currentDom.parentElement;
             }
+            return null;
+        },
+
+        // 从行元素中提取文件信息
+        getFileFromRow: (row) => {
+            if (!row) return null;
+
+            // 方法1: 从 React Fiber 获取
+            const fiberData = Utils.getFidFromFiber(row);
+            if (fiberData) return fiberData;
+
+            // 方法2: 从 data 属性获取
+            const dataFid = row.getAttribute('data-fid') || row.getAttribute('data-id') || row.getAttribute('data-file-id');
+            if (dataFid) {
+                const fileName = row.querySelector('.file-name, .name, [class*="fileName"], [class*="file_name"]')?.textContent?.trim();
+                return {
+                    fid: dataFid,
+                    name: fileName || '未命名文件',
+                    isDir: row.classList.contains('folder') || row.getAttribute('data-type') === 'folder',
+                    size: 0
+                };
+            }
+
+            // 方法3: 遍历子元素查找
+            const allElements = row.querySelectorAll('*');
+            for (const el of allElements) {
+                const data = Utils.getFidFromFiber(el);
+                if (data) return data;
+            }
+
             return null;
         },
 
@@ -328,18 +397,135 @@
     const App = {
         getSelectedFiles: () => {
             const selectedFiles = new Map();
-            const checkBoxes = document.querySelectorAll('.ant-checkbox-wrapper-checked:not(.ant-checkbox-group-item), .file-item-selected, [aria-checked="true"]');
-            const targets = checkBoxes.length > 0 ? checkBoxes : document.querySelectorAll('.ant-checkbox-checked');
 
-            targets.forEach(box => {
-                if (box.closest('.ant-table-thead') || box.closest('.list-head')) return;
+            // 选择器列表 - 覆盖各种可能的选中状态
+            const checkboxSelectors = [
+                // Ant Design 复选框
+                '.ant-checkbox-wrapper-checked',
+                '.ant-checkbox-checked',
+                '[class*="checkbox"][class*="checked"]',
+                // 选中状态的行
+                '.file-item-selected',
+                '[class*="selected"]',
+                '[class*="active"]',
+                // aria 属性
+                '[aria-checked="true"]',
+                '[aria-selected="true"]',
+                // 夸克特定选择器
+                '.file-list-item.selected',
+                '.list-item.selected',
+                '[class*="fileItem"][class*="selected"]',
+                '[class*="file-item"][class*="selected"]',
+                // 复选框输入
+                'input[type="checkbox"]:checked'
+            ];
 
-                const fileData = Utils.getFidFromFiber(box);
-                if (fileData && fileData.fid) {
-                    selectedFiles.set(fileData.fid, fileData);
+            // 行容器选择器
+            const rowSelectors = [
+                '.ant-table-row',
+                '.file-list-item',
+                '.file-item',
+                '.list-item',
+                '[class*="fileItem"]',
+                '[class*="file-item"]',
+                '[class*="ListItem"]',
+                '[class*="tableRow"]',
+                'tr[data-row-key]',
+                '[data-fid]',
+                '[data-id]'
+            ];
+
+            Utils.log('开始查找选中的文件...');
+
+            // 方法1: 通过选中的复选框查找
+            for (const selector of checkboxSelectors) {
+                try {
+                    const elements = document.querySelectorAll(selector);
+                    Utils.log(`选择器 "${selector}" 找到 ${elements.length} 个元素`);
+
+                    elements.forEach(el => {
+                        // 跳过表头
+                        if (el.closest('.ant-table-thead') ||
+                            el.closest('.list-head') ||
+                            el.closest('[class*="header"]') ||
+                            el.closest('[class*="Header"]')) {
+                            return;
+                        }
+
+                        // 找到所属的行
+                        let row = el;
+                        for (const rowSelector of rowSelectors) {
+                            const found = el.closest(rowSelector);
+                            if (found) {
+                                row = found;
+                                break;
+                            }
+                        }
+
+                        // 尝试获取文件数据
+                        const fileData = Utils.getFileFromRow(row) || Utils.getFidFromFiber(el);
+                        if (fileData && fileData.fid && !selectedFiles.has(fileData.fid)) {
+                            Utils.log('找到选中文件:', fileData.name);
+                            selectedFiles.set(fileData.fid, fileData);
+                        }
+                    });
+                } catch (e) {
+                    Utils.log('选择器错误:', selector, e);
                 }
-            });
+            }
 
+            // 方法2: 直接查找带有选中样式的行
+            if (selectedFiles.size === 0) {
+                Utils.log('方法1未找到文件，尝试方法2...');
+                for (const rowSelector of rowSelectors) {
+                    try {
+                        const rows = document.querySelectorAll(rowSelector);
+                        rows.forEach(row => {
+                            // 检查行是否有选中样式
+                            const isSelected = row.classList.contains('selected') ||
+                                row.classList.contains('checked') ||
+                                row.classList.contains('active') ||
+                                row.querySelector('.ant-checkbox-checked') ||
+                                row.querySelector('[aria-checked="true"]') ||
+                                row.querySelector('input:checked');
+
+                            if (isSelected) {
+                                const fileData = Utils.getFileFromRow(row);
+                                if (fileData && fileData.fid && !selectedFiles.has(fileData.fid)) {
+                                    selectedFiles.set(fileData.fid, fileData);
+                                }
+                            }
+                        });
+                    } catch (e) {
+                        Utils.log('行选择器错误:', rowSelector, e);
+                    }
+                }
+            }
+
+            // 方法3: 扫描所有可能的文件元素，检查视觉选中状态
+            if (selectedFiles.size === 0) {
+                Utils.log('方法2未找到文件，尝试方法3...');
+                const allRows = document.querySelectorAll('[class*="file"], [class*="File"], [class*="item"], [class*="Item"], [class*="row"], [class*="Row"]');
+                allRows.forEach(row => {
+                    // 检查复选框
+                    const checkbox = row.querySelector('input[type="checkbox"], .ant-checkbox, [class*="checkbox"], [class*="Checkbox"]');
+                    if (checkbox) {
+                        const isChecked = checkbox.checked ||
+                            checkbox.classList.contains('ant-checkbox-checked') ||
+                            checkbox.closest('.ant-checkbox-wrapper-checked') ||
+                            checkbox.getAttribute('aria-checked') === 'true';
+
+                        if (isChecked) {
+                            const fileData = Utils.getFileFromRow(row);
+                            if (fileData && fileData.fid && !selectedFiles.has(fileData.fid)) {
+                                selectedFiles.set(fileData.fid, fileData);
+                            }
+                        }
+                    }
+                });
+            }
+
+            Utils.log(`共找到 ${selectedFiles.size} 个选中的文件`);
             return Array.from(selectedFiles.values());
         },
 
@@ -349,6 +535,8 @@
 
             try {
                 let files = App.getSelectedFiles();
+                console.log('[威软夸克助手] 找到的文件:', files);
+
                 files = files.filter(f => !f.isDir);
 
                 // 应用文件类型过滤
@@ -357,7 +545,13 @@
                 }
 
                 if (files.length === 0) {
-                    Utils.toast(L.noFiles, 'error');
+                    // 提供更详细的错误信息
+                    const checkboxCount = document.querySelectorAll('.ant-checkbox-checked, .ant-checkbox-wrapper-checked, [aria-checked="true"]').length;
+                    if (checkboxCount > 0) {
+                        Utils.toast('检测到选中项，但无法获取文件信息。请尝试刷新页面后重试', 'error');
+                    } else {
+                        Utils.toast(L.noFiles, 'error');
+                    }
                     return;
                 }
 
@@ -948,6 +1142,7 @@
             menu.innerHTML = `
                 <div class="weiruan-menu-item" data-action="history">📜 ${L.history}</div>
                 <div class="weiruan-menu-item" data-action="settings">⚙️ ${L.settings}</div>
+                <div class="weiruan-menu-item" data-action="debug">🔧 调试模式</div>
             `;
 
             menu.addEventListener('click', (e) => {
@@ -956,6 +1151,16 @@
                     UI.showHistoryWindow();
                 } else if (action === 'settings') {
                     UI.showSettingsWindow();
+                } else if (action === 'debug') {
+                    CONFIG.DEBUG = !CONFIG.DEBUG;
+                    Utils.toast(`调试模式已${CONFIG.DEBUG ? '开启' : '关闭'}，查看控制台获取详细信息`, 'info');
+                    if (CONFIG.DEBUG) {
+                        // 输出页面结构信息帮助调试
+                        console.log('[威软夸克助手] 调试信息:');
+                        console.log('- 复选框元素:', document.querySelectorAll('.ant-checkbox, [class*="checkbox"]'));
+                        console.log('- 选中的复选框:', document.querySelectorAll('.ant-checkbox-checked, [aria-checked="true"]'));
+                        console.log('- 文件行元素:', document.querySelectorAll('[class*="file"], [class*="item"]'));
+                    }
                 }
             });
 
