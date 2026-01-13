@@ -1,1 +1,98 @@
-# weiruan-quark
+# 威软夸克助手
+
+夸克网盘增强下载助手，解除下载限制，支持批量导出直链。
+
+## 功能特色
+
+- **直链解析** - 获取文件真实下载链接，支持 IDM、NDM 等下载工具
+- **批量导出** - 一键复制全部下载链接
+- **多工具支持** - 支持 aria2、cURL、IDM 等多种下载方式
+- **文件过滤** - 按文件类型（视频/音频/图片/文档/压缩包）快速筛选
+- **下载历史** - 自动记录下载历史，方便回溯
+- **深色模式** - 支持自动/浅色/深色三种主题
+- **双语支持** - 中文/English 界面切换
+- **快捷键** - `Ctrl+D` 快速下载，`Esc` 关闭弹窗
+
+## 安装方法
+
+### 前置要求
+
+安装浏览器扩展（任选其一）：
+- [Tampermonkey](https://www.tampermonkey.net/) (推荐)
+- [Violentmonkey](https://violentmonkey.github.io/)
+- [Greasemonkey](https://www.greasespot.net/)
+
+### 安装脚本
+
+1. 点击安装：[威软夸克助手](https://raw.githubusercontent.com/weiruankeji2025/weiruan-quark/main/weiruan-quark-helper.user.js)
+2. 在弹出的安装页面点击「安装」
+3. 访问 [夸克网盘](https://pan.quark.cn/) 即可使用
+
+## 使用说明
+
+1. 打开夸克网盘分享页面或个人网盘
+2. 勾选需要下载的文件
+3. 点击左侧悬浮的「⚡ 下载助手」按钮
+4. 在弹窗中选择下载方式：
+   - **IDM** - 直接在浏览器中打开链接（配合 IDM 扩展自动接管）
+   - **cURL** - 复制 cURL 命令到终端执行
+   - **aria2** - 复制 aria2 命令（支持多线程下载）
+
+### 批量操作
+
+- **复制全部链接** - 复制所有文件的下载直链
+- **导出 aria2** - 导出所有文件的 aria2 下载命令
+- **导出 cURL** - 导出所有文件的 cURL 下载命令
+
+### IDM/NDM 配置
+
+使用 IDM/NDM 下载时，请配置自定义 User-Agent：
+
+```
+Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch
+```
+
+### aria2 下载示例
+
+```bash
+aria2c -c -x 16 -s 16 "下载链接" -o "文件名" -U "UA" --header="Cookie: xxx"
+```
+
+参数说明：
+- `-c` 断点续传
+- `-x 16` 每个服务器最大连接数
+- `-s 16` 分片数量
+
+## 快捷键
+
+| 快捷键 | 功能 |
+|--------|------|
+| `Ctrl+D` | 快速下载选中文件 |
+| `Esc` | 关闭弹窗 |
+
+## 更新日志
+
+### v1.0.0
+
+- 初始版本发布
+- 支持直链解析和批量导出
+- 支持 aria2/cURL/IDM 多种下载方式
+- 支持文件类型过滤
+- 支持下载历史记录
+- 支持深色模式和双语界面
+
+## 许可证
+
+MIT License
+
+## 免责声明
+
+本脚本仅供学习交流使用，请勿用于商业用途。使用本脚本产生的任何问题与作者无关。
+
+## 致谢
+
+- 感谢 [夸克网盘直链下载助手](https://greasyfork.org/scripts/558825) 提供的技术参考
+
+---
+
+**威软科技** © 2026
