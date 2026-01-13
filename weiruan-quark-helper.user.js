@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         威软夸克助手
 // @namespace    Weiruan-Quark-Helper
-// @version      1.0.3
+// @version      1.0.4
 // @description  夸克网盘增强下载助手。支持批量下载、直链导出、aria2/IDM/cURL、下载历史、文件过滤、深色模式、快捷键操作。
 // @author       威软科技
 // @license      MIT
@@ -23,10 +23,13 @@
 
     // ==================== 配置 ====================
     const CONFIG = {
+        // 个人网盘下载 API
         API: "https://drive.quark.cn/1/clouddrive/file/download?pr=ucpro&fr=pc",
+        // 分享页面下载 API
+        SHARE_API: "https://drive.quark.cn/1/clouddrive/share/sharepage/detail?pr=ucpro&fr=pc",
         UA: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch",
         DEPTH: 25,
-        VERSION: "1.0.3",
+        VERSION: "1.0.4",
         DEBUG: false, // 调试模式
         HISTORY_MAX: 100,
         SHORTCUTS: {
@@ -181,6 +184,51 @@
             if (CONFIG.DEBUG) {
                 console.log('[威软夸克助手]', ...args);
             }
+        },
+
+        // 检测是否在分享页面
+        isSharePage: () => {
+            return location.pathname.includes('/s/') || location.search.includes('pwd_id');
+        },
+
+        // 获取分享页面参数
+        getShareParams: () => {
+            // 从 URL 获取 pwd_id
+            let pwdId = null;
+            const pathMatch = location.pathname.match(/\/s\/([a-zA-Z0-9]+)/);
+            if (pathMatch) {
+                pwdId = pathMatch[1];
+            } else {
+                const urlParams = new URLSearchParams(location.search);
+                pwdId = urlParams.get('pwd_id');
+            }
+
+            // 从 cookie 或页面获取 stoken
+            let stoken = '';
+            const stokenMatch = document.cookie.match(/__puus=([^;]+)/);
+            if (stokenMatch) {
+                stoken = decodeURIComponent(stokenMatch[1]);
+            }
+
+            // 尝试从页面 window 对象获取
+            if (!stoken && unsafeWindow?.__INITIAL_STATE__?.shareToken) {
+                stoken = unsafeWindow.__INITIAL_STATE__.shareToken;
+            }
+
+            // 从页面 script 标签中查找
+            if (!stoken) {
+                const scripts = document.querySelectorAll('script');
+                for (const script of scripts) {
+                    const match = script.textContent?.match(/stoken["']?\s*[:=]\s*["']([^"']+)["']/);
+                    if (match) {
+                        stoken = match[1];
+                        break;
+                    }
+                }
+            }
+
+            console.log('[威软夸克助手] 分享参数:', { pwdId, stoken: stoken ? '已获取' : '未获取' });
+            return { pwdId, stoken };
         },
 
         // 从 React Fiber 中提取文件信息
@@ -571,15 +619,58 @@
                     btn.disabled = true;
                 }
 
+                let res;
+                const isShare = Utils.isSharePage();
+                console.log('[威软夸克助手] 页面类型:', isShare ? '分享页面' : '个人网盘');
                 console.log('[威软夸克助手] 准备请求API, fids:', files.map(f => f.fid));
-                const res = await Utils.post(CONFIG.API, { fids: files.map(f => f.fid) });
-                console.log('[威软夸克助手] API返回:', res);
 
-                if (res && res.code === 0) {
+                if (isShare) {
+                    // 分享页面处理
+                    const { pwdId, stoken } = Utils.getShareParams();
+                    if (!pwdId) {
+                        Utils.toast('无法获取分享信息，请刷新页面重试', 'error');
+                        return;
+                    }
+
+                    // 调用分享页面 API
+                    res = await Utils.post(CONFIG.SHARE_API, {
+                        pwd_id: pwdId,
+                        stoken: stoken,
+                        fids: files.map(f => f.fid),
+                        _fetch_share: 1
+                    });
+                    console.log('[威软夸克助手] 分享API返回:', res);
+
+                    // 如果分享 API 失败，尝试直接获取下载链接
+                    if (!res || res.code !== 0 || !res.data || res.data.length === 0) {
+                        console.log('[威软夸克助手] 分享API未返回数据，尝试直接构建下载链接...');
+                        // 构造一个简单的结果，用文件信息填充
+                        const directFiles = files.map(f => ({
+                            fid: f.fid,
+                            file_name: f.name,
+                            size: f.size || 0,
+                            download_url: f.download_url || null
+                        })).filter(f => f.download_url);
+
+                        if (directFiles.length > 0) {
+                            res = { code: 0, data: directFiles };
+                        } else {
+                            // 最后尝试：调用转存后下载
+                            Utils.toast('分享文件需要先保存到网盘才能下载', 'info');
+                            return;
+                        }
+                    }
+                } else {
+                    // 个人网盘处理
+                    res = await Utils.post(CONFIG.API, { fids: files.map(f => f.fid) });
+                    console.log('[威软夸克助手] API返回:', res);
+                }
+
+                if (res && res.code === 0 && res.data && res.data.length > 0) {
                     State.addHistory(res.data);
                     UI.showResultWindow(res.data);
                 } else {
-                    Utils.toast(`${L.parseError}: ${res?.message || 'Unknown error'}`, 'error');
+                    Utils.toast(`${L.parseError}: ${res?.message || '未获取到下载链接'}`, 'error');
                 }
             } catch(e) {
                 console.error('[威软夸克助手]', e);
