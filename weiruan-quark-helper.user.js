@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         威软夸克助手
 // @namespace    Weiruan-Quark-Helper
-// @version      1.0.2
+// @version      1.0.3
 // @description  夸克网盘增强下载助手。支持批量下载、直链导出、aria2/IDM/cURL、下载历史、文件过滤、深色模式、快捷键操作。
 // @author       威软科技
 // @license      MIT
@@ -26,7 +26,7 @@
         API: "https://drive.quark.cn/1/clouddrive/file/download?pr=ucpro&fr=pc",
         UA: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch",
         DEPTH: 25,
-        VERSION: "1.0.2",
+        VERSION: "1.0.3",
         DEBUG: false, // 调试模式
         HISTORY_MAX: 100,
         SHORTCUTS: {
@@ -543,9 +543,12 @@
 
             try {
                 let files = App.getSelectedFiles();
-                console.log('[威软夸克助手] 找到的文件:', files);
+                console.log('[威软夸克助手] 找到的原始文件:', files);
+                console.log('[威软夸克助手] 文件详情:', files.map(f => ({name: f.name, isDir: f.isDir, fid: f.fid})));
 
+                const beforeFilterCount = files.length;
                 files = files.filter(f => !f.isDir);
+                console.log(`[威软夸克助手] 过滤文件夹后: ${beforeFilterCount} -> ${files.length}`);
 
                 // 应用文件类型过滤
                 if (filterType !== 'all') {
@@ -568,7 +571,9 @@
                     btn.disabled = true;
                 }
 
+                console.log('[威软夸克助手] 准备请求API, fids:', files.map(f => f.fid));
                 const res = await Utils.post(CONFIG.API, { fids: files.map(f => f.fid) });
+                console.log('[威软夸克助手] API返回:', res);
 
                 if (res && res.code === 0) {
                     State.addHistory(res.data);
