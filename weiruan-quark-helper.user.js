@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         威软夸克助手
 // @namespace    Weiruan-Quark-Helper
-// @version      1.0.1
+// @version      1.0.2
 // @description  夸克网盘增强下载助手。支持批量下载、直链导出、aria2/IDM/cURL、下载历史、文件过滤、深色模式、快捷键操作。
 // @author       威软科技
 // @license      MIT
@@ -26,7 +26,7 @@
         API: "https://drive.quark.cn/1/clouddrive/file/download?pr=ucpro&fr=pc",
         UA: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch",
         DEPTH: 25,
-        VERSION: "1.0.1",
+        VERSION: "1.0.2",
         DEBUG: false, // 调试模式
         HISTORY_MAX: 100,
         SHORTCUTS: {
@@ -221,14 +221,22 @@
 
                         for (const candidate of candidates) {
                             if (candidate && (candidate.fid || candidate.id || candidate.file_id)) {
+                                // 判断是否为文件夹 - 更保守的判断
+                                const isDirectory =
+                                    candidate.dir === true ||
+                                    candidate.is_dir === true ||
+                                    candidate.type === 'folder' ||
+                                    candidate.obj_category === 'folder' ||
+                                    (candidate.category !== undefined && candidate.category === 0);
+
                                 const fileData = {
                                     fid: candidate.fid || candidate.id || candidate.file_id,
                                     name: candidate.file_name || candidate.name || candidate.title || candidate.fileName || "未命名文件",
-                                    isDir: candidate.dir === true || candidate.is_dir === true || candidate.type === 'folder' || candidate.file_type === 0,
+                                    isDir: isDirectory,
                                     size: candidate.size || candidate.file_size || 0,
                                     download_url: candidate.download_url
                                 };
-                                Utils.log('找到文件:', fileData);
+                                Utils.log('找到文件:', fileData.name, 'isDir:', fileData.isDir, '原始数据:', candidate);
                                 return fileData;
                             }
                         }
