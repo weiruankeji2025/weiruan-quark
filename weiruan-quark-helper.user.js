@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         威软夸克助手
 // @namespace    Weiruan-Quark-Helper
-// @version      1.0.6
+// @version      1.0.7
 // @description  夸克网盘增强下载助手。支持批量下载、直链导出、aria2/IDM/cURL、下载历史、文件过滤、深色模式、快捷键操作。
 // @author       威软科技
 // @license      MIT
@@ -29,7 +29,7 @@
         SHARE_DOWNLOAD_API: "https://drive.quark.cn/1/clouddrive/share/sharepage/download?pr=ucpro&fr=pc",
         UA: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch",
         DEPTH: 25,
-        VERSION: "1.0.6",
+        VERSION: "1.0.7",
         DEBUG: false, // 调试模式
         HISTORY_MAX: 100,
         SHORTCUTS: {
@@ -451,9 +451,271 @@
 
     // ==================== 应用逻辑 ====================
     const App = {
+        // 从全局状态获取选中的文件（解决虚拟滚动问题）
+        getSelectedFilesFromState: () => {
+            const files = [];
+
+            try {
+                // 方法1: 从 Redux store 获取
+                const win = unsafeWindow || window;
+
+                // 尝试获取 Redux store
+                if (win.__REDUX_STORE__ || win.store || win.__store__) {
+                    const store = win.__REDUX_STORE__ || win.store || win.__store__;
+                    const state = store.getState?.();
+                    Utils.log('Redux state:', state);
+
+                    if (state?.file?.selectedFiles) {
+                        return state.file.selectedFiles;
+                    }
+                    if (state?.selection?.selected) {
+                        return state.selection.selected;
+                    }
+                }
+
+                // 方法2: 从 React 根节点获取状态
+                const rootEl = document.getElementById('root') || document.getElementById('app');
+                if (rootEl) {
+                    const fiberKey = Object.keys(rootEl).find(k =>
+                        k.startsWith('__reactContainer$') ||
+                        k.startsWith('__reactFiber$')
+                    );
+
+                    if (fiberKey) {
+                        let fiber = rootEl[fiberKey];
+                        let attempts = 0;
+
+                        while (fiber && attempts < 50) {
+                            const state = fiber.memoizedState;
+
+                            // 查找包含选中文件信息的状态
+                            if (state?.memoizedState?.selectedKeys ||
+                                state?.memoizedState?.selectedRowKeys ||
+                                state?.memoizedState?.checkedKeys) {
+                                Utils.log('找到选中状态:', state.memoizedState);
+                            }
+
+                            // 查找文件列表状态
+                            if (state?.memoizedState?.fileList ||
+                                state?.memoizedState?.dataSource ||
+                                state?.memoizedState?.list) {
+                                const fileList = state.memoizedState.fileList ||
+                                                state.memoizedState.dataSource ||
+                                                state.memoizedState.list;
+                                Utils.log('找到文件列表:', fileList?.length);
+                            }
+
+                            fiber = fiber.child || fiber.sibling || fiber.return;
+                            attempts++;
+                        }
+                    }
+                }
+
+                // 方法3: 从全局变量获取
+                const possibleVars = ['__INITIAL_STATE__', '__DATA__', '__APP_DATA__', 'pageData', 'appData'];
+                for (const varName of possibleVars) {
+                    if (win[varName]) {
+                        Utils.log(`全局变量 ${varName}:`, win[varName]);
+                        const data = win[varName];
+                        if (data.selectedFiles) return data.selectedFiles;
+                        if (data.file?.selectedFiles) return data.file.selectedFiles;
+                        if (data.list?.selectedFiles) return data.list.selectedFiles;
+                    }
+                }
+
+                // 方法4: 尝试从表格组件获取（Ant Design Table）
+                const tableWrapper = document.querySelector('.ant-table-wrapper, [class*="table-wrapper"]');
+                if (tableWrapper) {
+                    const tableKey = Object.keys(tableWrapper).find(k =>
+                        k.startsWith('__reactFiber$') || k.startsWith('__reactProps$')
+                    );
+
+                    if (tableKey) {
+                        let fiber = tableWrapper[tableKey];
+                        let attempts = 0;
+
+                        while (fiber && attempts < 30) {
+                            const props = fiber.memoizedProps || fiber.pendingProps;
+
+                            // Ant Design Table 的 dataSource 和 selectedRowKeys
+                            if (props?.dataSource && Array.isArray(props.dataSource)) {
+                                const selectedKeys = props.rowSelection?.selectedRowKeys ||
+                                                    props.selectedRowKeys || [];
+                                Utils.log('Table dataSource:', props.dataSource.length, '选中:', selectedKeys.length);
+
+                                if (selectedKeys.length > 0) {
+                                    const selectedFiles = props.dataSource.filter(item =>
+                                        selectedKeys.includes(item.fid || item.id || item.key)
+                                    );
+
+                                    if (selectedFiles.length > 0) {
+                                        return selectedFiles.map(f => ({
+                                            fid: f.fid || f.id || f.file_id,
+                                            name: f.file_name || f.name || f.fileName || '未命名',
+                                            isDir: f.dir === true || f.is_dir === true || f.type === 'folder',
+                                            size: f.size || f.file_size || 0,
+                                            download_url: f.download_url
+                                        }));
+                                    }
+                                }
+                            }
+
+                            fiber = fiber.return;
+                            attempts++;
+                        }
+                    }
+                }
+
+            } catch (e) {
+                Utils.log('从状态获取文件失败:', e);
+            }
+
+            return files;
+        },
+
+        // 深度遍历 React Fiber 树获取所有选中文件
+        getSelectedFilesFromFiberTree: () => {
+            const files = [];
+            const visited = new Set();
+
+            try {
+                const win = unsafeWindow || window;
+
+                // 查找包含文件列表的组件
+                const containers = document.querySelectorAll(
+                    '.file-list, [class*="fileList"], [class*="FileList"], ' +
+                    '.ant-table-body, [class*="table"], [class*="list-view"], ' +
+                    '[class*="ListView"], [class*="content-list"]'
+                );
+
+                for (const container of containers) {
+                    const key = Object.keys(container).find(k =>
+                        k.startsWith('__reactFiber$') ||
+                        k.startsWith('__reactInternalInstance$')
+                    );
+
+                    if (!key) continue;
+
+                    // BFS 遍历 Fiber 树
+                    const queue = [container[key]];
+                    let iterations = 0;
+                    const maxIterations = 500;
+
+                    while (queue.length > 0 && iterations < maxIterations) {
+                        iterations++;
+                        const fiber = queue.shift();
+                        if (!fiber || visited.has(fiber)) continue;
+                        visited.add(fiber);
+
+                        // 检查 memoizedProps
+                        const props = fiber.memoizedProps || fiber.pendingProps || {};
+
+                        // 查找 dataSource（完整数据列表）
+                        if (props.dataSource && Array.isArray(props.dataSource) && props.dataSource.length > 0) {
+                            const selectedKeys = props.rowSelection?.selectedRowKeys ||
+                                                props.selectedRowKeys ||
+                                                props.checkedKeys || [];
+
+                            Utils.log('找到 dataSource:', props.dataSource.length, '选中keys:', selectedKeys.length);
+
+                            if (selectedKeys.length > 0) {
+                                for (const item of props.dataSource) {
+                                    const itemKey = item.fid || item.id || item.key || item.file_id;
+                                    if (selectedKeys.includes(itemKey)) {
+                                        files.push({
+                                            fid: item.fid || item.id || item.file_id,
+                                            name: item.file_name || item.name || item.fileName || '未命名',
+                                            isDir: item.dir === true || item.is_dir === true ||
+                                                   item.type === 'folder' || item.obj_category === 'folder',
+                                            size: item.size || item.file_size || 0,
+                                            download_url: item.download_url
+                                        });
+                                    }
+                                }
+                            }
+                        }
+
+                        // 查找文件列表数据
+                        if (props.list && Array.isArray(props.list)) {
+                            Utils.log('找到 list:', props.list.length);
+                        }
+
+                        // 查找 items
+                        if (props.items && Array.isArray(props.items)) {
+                            Utils.log('找到 items:', props.items.length);
+                        }
+
+                        // 检查 memoizedState
+                        let state = fiber.memoizedState;
+                        while (state) {
+                            if (state.memoizedState) {
+                                const ms = state.memoizedState;
+                                // 查找选中状态
+                                if (ms.selectedRowKeys || ms.selectedKeys || ms.checkedKeys) {
+                                    Utils.log('State 中找到选中keys:', ms.selectedRowKeys || ms.selectedKeys || ms.checkedKeys);
+                                }
+                                // 查找文件数据
+                                if (ms.fileList || ms.dataSource || ms.list) {
+                                    Utils.log('State 中找到文件列表');
+                                }
+                            }
+                            state = state.next;
+                        }
+
+                        // 添加子节点到队列
+                        if (fiber.child) queue.push(fiber.child);
+                        if (fiber.sibling) queue.push(fiber.sibling);
+                        if (fiber.return && !visited.has(fiber.return)) queue.push(fiber.return);
+                    }
+                }
+
+                // 去重
+                const uniqueFiles = [];
+                const seenFids = new Set();
+                for (const f of files) {
+                    if (!seenFids.has(f.fid)) {
+                        seenFids.add(f.fid);
+                        uniqueFiles.push(f);
+                    }
+                }
+
+                return uniqueFiles;
+
+            } catch (e) {
+                Utils.log('Fiber树遍历失败:', e);
+            }
+
+            return files;
+        },
+
         getSelectedFiles: () => {
             const selectedFiles = new Map();
 
+            // 方法1: 从全局状态获取（解决虚拟滚动问题）
+            const stateFiles = App.getSelectedFilesFromState();
+            if (stateFiles.length > 0) {
+                Utils.log('从状态获取到文件:', stateFiles.length);
+                stateFiles.forEach(f => {
+                    if (f.fid && !selectedFiles.has(f.fid)) {
+                        selectedFiles.set(f.fid, f);
+                    }
+                });
+            }
+
+            // 方法2: 从 Fiber 树深度遍历获取
+            if (selectedFiles.size === 0) {
+                const fiberFiles = App.getSelectedFilesFromFiberTree();
+                if (fiberFiles.length > 0) {
+                    Utils.log('从Fiber树获取到文件:', fiberFiles.length);
+                    fiberFiles.forEach(f => {
+                        if (f.fid && !selectedFiles.has(f.fid)) {
+                            selectedFiles.set(f.fid, f);
+                        }
+                    });
+                }
+            }
+
+            // 方法3: 从DOM获取（可见的文件）
             // 选择器列表 - 覆盖各种可能的选中状态
             const checkboxSelectors = [
                 // Ant Design 复选框
@@ -848,6 +1110,18 @@
                     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                 }
 
+                .weiruan-tab-content {
+                    display: none;
+                    flex-direction: column;
+                    min-height: 0;
+                    flex: 1;
+                    overflow: hidden;
+                }
+
+                .weiruan-tab-content.active {
+                    display: flex;
+                }
+
                 .weiruan-modal-header {
                     padding: 18px 24px;
                     border-bottom: 1px solid var(--weiruan-border, #eee);
@@ -960,6 +1234,8 @@
                     padding: 16px 24px;
                     overflow-y: auto;
                     flex: 1;
+                    min-height: 0;
+                    max-height: 400px;
                     background: var(--weiruan-bg, #ffffff);
                 }
 
@@ -1081,14 +1357,6 @@
                     height: 2px;
                     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                     border-radius: 2px 2px 0 0;
-                }
-
-                .weiruan-tab-content {
-                    display: none;
-                }
-
-                .weiruan-tab-content.active {
-                    display: block;
                 }
 
                 /* History Styles */
@@ -1257,11 +1525,39 @@
                     CONFIG.DEBUG = !CONFIG.DEBUG;
                     Utils.toast(`调试模式已${CONFIG.DEBUG ? '开启' : '关闭'}，查看控制台获取详细信息`, 'info');
                     if (CONFIG.DEBUG) {
-                        // 输出页面结构信息帮助调试
-                        console.log('[威软夸克助手] 调试信息:');
-                        console.log('- 复选框元素:', document.querySelectorAll('.ant-checkbox, [class*="checkbox"]'));
-                        console.log('- 选中的复选框:', document.querySelectorAll('.ant-checkbox-checked, [aria-checked="true"]'));
-                        console.log('- 文件行元素:', document.querySelectorAll('[class*="file"], [class*="item"]'));
+                        // 输出详细的页面分析
+                        console.log('==========================================');
+                        console.log('[威软夸克助手] 调试信息 v' + CONFIG.VERSION);
+                        console.log('==========================================');
+                        console.log('页面类型:', Utils.isSharePage() ? '分享页面' : '个人网盘');
+                        console.log('URL:', location.href);
+
+                        // 复选框分析
+                        const checkboxes = document.querySelectorAll('.ant-checkbox, [class*="checkbox"]');
+                        const checkedBoxes = document.querySelectorAll('.ant-checkbox-checked, .ant-checkbox-wrapper-checked, [aria-checked="true"]');
+                        console.log('复选框总数:', checkboxes.length);
+                        console.log('选中的复选框:', checkedBoxes.length);
+
+                        // 文件行分析
+                        const rows = document.querySelectorAll('.ant-table-row, [class*="file-item"], [class*="fileItem"], [class*="list-item"]');
+                        console.log('文件行元素:', rows.length);
+
+                        // 尝试分析全局状态
+                        const win = unsafeWindow || window;
+                        console.log('全局变量检测:');
+                        ['__REDUX_STORE__', 'store', '__store__', '__INITIAL_STATE__', '__DATA__'].forEach(v => {
+                            if (win[v]) console.log(`  - ${v}: 存在`);
+                        });
+
+                        // 尝试获取文件
+                        console.log('尝试获取选中文件...');
+                        const files = App.getSelectedFiles();
+                        console.log('获取到的文件:', files.length);
+                        files.forEach((f, i) => {
+                            console.log(`  ${i+1}. ${f.name} (fid: ${f.fid}, isDir: ${f.isDir})`);
+                        });
+
+                        console.log('==========================================');
                     }
                 }
             });
