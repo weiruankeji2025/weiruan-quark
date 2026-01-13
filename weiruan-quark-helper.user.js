@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         威软夸克助手
 // @namespace    Weiruan-Quark-Helper
-// @version      1.0.4
+// @version      1.0.5
 // @description  夸克网盘增强下载助手。支持批量下载、直链导出、aria2/IDM/cURL、下载历史、文件过滤、深色模式、快捷键操作。
 // @author       威软科技
 // @license      MIT
@@ -25,11 +25,11 @@
     const CONFIG = {
         // 个人网盘下载 API
         API: "https://drive.quark.cn/1/clouddrive/file/download?pr=ucpro&fr=pc",
-        // 分享页面下载 API
-        SHARE_API: "https://drive.quark.cn/1/clouddrive/share/sharepage/detail?pr=ucpro&fr=pc",
+        // 分享页面下载 API (POST)
+        SHARE_DOWNLOAD_API: "https://drive.quark.cn/1/clouddrive/share/sharepage/download?pr=ucpro&fr=pc",
         UA: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch",
         DEPTH: 25,
-        VERSION: "1.0.4",
+        VERSION: "1.0.5",
         DEBUG: false, // 调试模式
         HISTORY_MAX: 100,
         SHORTCUTS: {
@@ -632,14 +632,23 @@
                         return;
                     }
 
-                    // 调用分享页面 API
-                    res = await Utils.post(CONFIG.SHARE_API, {
+                    // 调用分享页面下载 API
+                    res = await Utils.post(CONFIG.SHARE_DOWNLOAD_API, {
                         pwd_id: pwdId,
                         stoken: stoken,
-                        fids: files.map(f => f.fid),
-                        _fetch_share: 1
+                        fids: files.map(f => f.fid)
                     });
-                    console.log('[威软夸克助手] 分享API返回:', res);
+                    console.log('[威软夸克助手] 分享下载API返回:', res);
+
+                    // 如果返回的是对象而不是数组，尝试提取数据
+                    if (res && res.code === 0 && res.data) {
+                        // 可能返回的是 { data: [...] } 或 { data: { list: [...] } }
+                        if (Array.isArray(res.data)) {
+                            // 已经是数组，不需要处理
+                        } else if (res.data.list && Array.isArray(res.data.list)) {
+                            res.data = res.data.list;
+                        }
+                    }
 
                     // 如果分享 API 失败，尝试直接获取下载链接
                     if (!res || res.code !== 0 || !res.data || res.data.length === 0) {
@@ -655,8 +664,9 @@
                         if (directFiles.length > 0) {
                             res = { code: 0, data: directFiles };
                         } else {
-                            // 最后尝试：调用转存后下载
-                            Utils.toast('分享文件需要先保存到网盘才能下载', 'info');
+                            // 最后尝试：提示用户
+                            const errMsg = res?.message || '分享文件可能需要先保存到网盘';
+                            Utils.toast(errMsg, 'error');
                             return;
                         }
                     }
