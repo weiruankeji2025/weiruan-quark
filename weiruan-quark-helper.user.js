@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         威软夸克助手
 // @namespace    Weiruan-Quark-Helper
-// @version      1.0.7
+// @version      1.0.8
 // @description  夸克网盘增强下载助手。支持批量下载、直链导出、aria2/IDM/cURL、下载历史、文件过滤、深色模式、快捷键操作。
 // @author       威软科技
 // @license      MIT
@@ -29,7 +29,7 @@
         SHARE_DOWNLOAD_API: "https://drive.quark.cn/1/clouddrive/share/sharepage/download?pr=ucpro&fr=pc",
         UA: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch",
         DEPTH: 25,
-        VERSION: "1.0.7",
+        VERSION: "1.0.8",
         DEBUG: false, // 调试模式
         HISTORY_MAX: 100,
         SHORTCUTS: {
@@ -84,7 +84,17 @@
             cancel: '取消',
             auto: '跟随系统',
             light: '浅色',
-            dark: '深色'
+            dark: '深色',
+            starMap: '星际历史图',
+            starMapTitle: '星际历史图',
+            starMapDesc: '探索你的下载宇宙',
+            totalDownloads: '总下载',
+            fileTypes: '文件类型',
+            timeline: '时间线',
+            galaxy: '星系',
+            clickToExplore: '点击星球查看详情',
+            downloadTime: '下载时间',
+            starSize: '星球大小由文件大小决定'
         },
         en: {
             title: 'Weiruan Quark Helper',
@@ -130,7 +140,17 @@
             cancel: 'Cancel',
             auto: 'Auto',
             light: 'Light',
-            dark: 'Dark'
+            dark: 'Dark',
+            starMap: 'Star History Map',
+            starMapTitle: 'Star History Map',
+            starMapDesc: 'Explore your download universe',
+            totalDownloads: 'Total Downloads',
+            fileTypes: 'File Types',
+            timeline: 'Timeline',
+            galaxy: 'Galaxy',
+            clickToExplore: 'Click a planet to see details',
+            downloadTime: 'Download Time',
+            starSize: 'Planet size represents file size'
         }
     };
 
@@ -1462,6 +1482,362 @@
                     --weiruan-btn-secondary-hover: #444;
                 }
 
+                /* Star Map Styles */
+                @keyframes weiruan-twinkle {
+                    0%, 100% { opacity: 0.3; }
+                    50% { opacity: 1; }
+                }
+
+                @keyframes weiruan-orbit {
+                    from { transform: rotate(0deg); }
+                    to { transform: rotate(360deg); }
+                }
+
+                @keyframes weiruan-float {
+                    0%, 100% { transform: translateY(0); }
+                    50% { transform: translateY(-10px); }
+                }
+
+                @keyframes weiruan-pulse-glow {
+                    0%, 100% { box-shadow: 0 0 20px currentColor; }
+                    50% { box-shadow: 0 0 40px currentColor, 0 0 60px currentColor; }
+                }
+
+                .weiruan-starmap-overlay {
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    background: radial-gradient(ellipse at center, #1a1a2e 0%, #0d0d1a 50%, #000000 100%);
+                    z-index: 2147483648;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    overflow: hidden;
+                }
+
+                .weiruan-starmap-bg {
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    overflow: hidden;
+                    pointer-events: none;
+                }
+
+                .weiruan-star {
+                    position: absolute;
+                    background: white;
+                    border-radius: 50%;
+                    animation: weiruan-twinkle var(--duration, 2s) ease-in-out infinite;
+                    animation-delay: var(--delay, 0s);
+                }
+
+                .weiruan-starmap-container {
+                    position: relative;
+                    width: 90%;
+                    max-width: 1000px;
+                    height: 80vh;
+                    max-height: 700px;
+                    background: rgba(20, 20, 40, 0.8);
+                    border-radius: 20px;
+                    border: 1px solid rgba(102, 126, 234, 0.3);
+                    box-shadow: 0 0 60px rgba(102, 126, 234, 0.2);
+                    display: flex;
+                    flex-direction: column;
+                    overflow: hidden;
+                    backdrop-filter: blur(10px);
+                }
+
+                .weiruan-starmap-header {
+                    padding: 20px 24px;
+                    background: linear-gradient(135deg, rgba(102, 126, 234, 0.3) 0%, rgba(118, 75, 162, 0.3) 100%);
+                    border-bottom: 1px solid rgba(102, 126, 234, 0.3);
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                }
+
+                .weiruan-starmap-title {
+                    color: #fff;
+                    font-size: 20px;
+                    font-weight: 600;
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                    margin: 0;
+                }
+
+                .weiruan-starmap-title-icon {
+                    font-size: 28px;
+                    animation: weiruan-float 3s ease-in-out infinite;
+                }
+
+                .weiruan-starmap-close {
+                    width: 36px;
+                    height: 36px;
+                    border-radius: 50%;
+                    background: rgba(255, 255, 255, 0.1);
+                    border: none;
+                    color: #fff;
+                    font-size: 24px;
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    transition: all 0.3s;
+                }
+
+                .weiruan-starmap-close:hover {
+                    background: rgba(255, 100, 100, 0.3);
+                    transform: rotate(90deg);
+                }
+
+                .weiruan-starmap-stats {
+                    padding: 16px 24px;
+                    display: flex;
+                    gap: 20px;
+                    border-bottom: 1px solid rgba(102, 126, 234, 0.2);
+                    flex-wrap: wrap;
+                }
+
+                .weiruan-starmap-stat {
+                    background: rgba(102, 126, 234, 0.15);
+                    padding: 12px 20px;
+                    border-radius: 12px;
+                    border: 1px solid rgba(102, 126, 234, 0.2);
+                }
+
+                .weiruan-starmap-stat-value {
+                    font-size: 24px;
+                    font-weight: 700;
+                    color: #667eea;
+                    display: block;
+                }
+
+                .weiruan-starmap-stat-label {
+                    font-size: 12px;
+                    color: rgba(255, 255, 255, 0.6);
+                    margin-top: 4px;
+                }
+
+                .weiruan-starmap-body {
+                    flex: 1;
+                    display: flex;
+                    overflow: hidden;
+                    min-height: 0;
+                }
+
+                .weiruan-starmap-galaxy {
+                    flex: 1;
+                    position: relative;
+                    overflow: hidden;
+                    min-height: 300px;
+                }
+
+                .weiruan-starmap-center {
+                    position: absolute;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -50%);
+                    width: 60px;
+                    height: 60px;
+                    background: radial-gradient(circle, #ffd700 0%, #ff8c00 50%, #ff4500 100%);
+                    border-radius: 50%;
+                    box-shadow: 0 0 40px #ffd700, 0 0 80px #ff8c00;
+                    animation: weiruan-pulse-glow 3s ease-in-out infinite;
+                    z-index: 10;
+                }
+
+                .weiruan-starmap-center::before {
+                    content: '☀️';
+                    position: absolute;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -50%);
+                    font-size: 30px;
+                }
+
+                .weiruan-starmap-orbit {
+                    position: absolute;
+                    top: 50%;
+                    left: 50%;
+                    border: 1px dashed rgba(102, 126, 234, 0.3);
+                    border-radius: 50%;
+                    transform: translate(-50%, -50%);
+                }
+
+                .weiruan-starmap-planet {
+                    position: absolute;
+                    border-radius: 50%;
+                    cursor: pointer;
+                    transition: transform 0.3s, box-shadow 0.3s;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: var(--planet-font-size, 16px);
+                    animation: weiruan-orbit var(--orbit-duration, 20s) linear infinite;
+                    transform-origin: center center;
+                }
+
+                .weiruan-starmap-planet:hover {
+                    transform: scale(1.3);
+                    z-index: 100;
+                }
+
+                .weiruan-starmap-planet-inner {
+                    width: 100%;
+                    height: 100%;
+                    border-radius: 50%;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    background: var(--planet-bg);
+                    box-shadow: 0 0 15px var(--planet-glow), inset -5px -5px 15px rgba(0,0,0,0.3);
+                }
+
+                .weiruan-starmap-planet.video { --planet-bg: linear-gradient(135deg, #667eea, #764ba2); --planet-glow: rgba(102, 126, 234, 0.6); }
+                .weiruan-starmap-planet.audio { --planet-bg: linear-gradient(135deg, #11998e, #38ef7d); --planet-glow: rgba(56, 239, 125, 0.6); }
+                .weiruan-starmap-planet.image { --planet-bg: linear-gradient(135deg, #fc466b, #3f5efb); --planet-glow: rgba(252, 70, 107, 0.6); }
+                .weiruan-starmap-planet.document { --planet-bg: linear-gradient(135deg, #f093fb, #f5576c); --planet-glow: rgba(240, 147, 251, 0.6); }
+                .weiruan-starmap-planet.archive { --planet-bg: linear-gradient(135deg, #4facfe, #00f2fe); --planet-glow: rgba(79, 172, 254, 0.6); }
+                .weiruan-starmap-planet.other { --planet-bg: linear-gradient(135deg, #a8a8a8, #6a6a6a); --planet-glow: rgba(168, 168, 168, 0.6); }
+
+                .weiruan-starmap-tooltip {
+                    position: fixed;
+                    background: rgba(20, 20, 40, 0.95);
+                    border: 1px solid rgba(102, 126, 234, 0.5);
+                    border-radius: 12px;
+                    padding: 14px 18px;
+                    color: #fff;
+                    font-size: 13px;
+                    max-width: 280px;
+                    z-index: 2147483650;
+                    pointer-events: none;
+                    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+                    backdrop-filter: blur(10px);
+                }
+
+                .weiruan-starmap-tooltip-name {
+                    font-weight: 600;
+                    font-size: 14px;
+                    margin-bottom: 8px;
+                    word-break: break-all;
+                    color: #667eea;
+                }
+
+                .weiruan-starmap-tooltip-meta {
+                    display: flex;
+                    gap: 15px;
+                    color: rgba(255, 255, 255, 0.7);
+                    font-size: 12px;
+                }
+
+                .weiruan-starmap-sidebar {
+                    width: 260px;
+                    background: rgba(10, 10, 25, 0.6);
+                    border-left: 1px solid rgba(102, 126, 234, 0.2);
+                    padding: 16px;
+                    overflow-y: auto;
+                }
+
+                .weiruan-starmap-legend-title {
+                    color: rgba(255, 255, 255, 0.8);
+                    font-size: 13px;
+                    font-weight: 600;
+                    margin-bottom: 12px;
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                }
+
+                .weiruan-starmap-legend-item {
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                    padding: 8px 0;
+                    color: rgba(255, 255, 255, 0.7);
+                    font-size: 12px;
+                }
+
+                .weiruan-starmap-legend-dot {
+                    width: 14px;
+                    height: 14px;
+                    border-radius: 50%;
+                    flex-shrink: 0;
+                }
+
+                .weiruan-starmap-legend-dot.video { background: linear-gradient(135deg, #667eea, #764ba2); }
+                .weiruan-starmap-legend-dot.audio { background: linear-gradient(135deg, #11998e, #38ef7d); }
+                .weiruan-starmap-legend-dot.image { background: linear-gradient(135deg, #fc466b, #3f5efb); }
+                .weiruan-starmap-legend-dot.document { background: linear-gradient(135deg, #f093fb, #f5576c); }
+                .weiruan-starmap-legend-dot.archive { background: linear-gradient(135deg, #4facfe, #00f2fe); }
+                .weiruan-starmap-legend-dot.other { background: linear-gradient(135deg, #a8a8a8, #6a6a6a); }
+
+                .weiruan-starmap-recent {
+                    margin-top: 20px;
+                }
+
+                .weiruan-starmap-recent-item {
+                    padding: 10px;
+                    background: rgba(102, 126, 234, 0.1);
+                    border-radius: 8px;
+                    margin-bottom: 8px;
+                    border: 1px solid rgba(102, 126, 234, 0.15);
+                    transition: all 0.2s;
+                }
+
+                .weiruan-starmap-recent-item:hover {
+                    background: rgba(102, 126, 234, 0.2);
+                    border-color: rgba(102, 126, 234, 0.3);
+                }
+
+                .weiruan-starmap-recent-name {
+                    color: #fff;
+                    font-size: 12px;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    margin-bottom: 4px;
+                }
+
+                .weiruan-starmap-recent-meta {
+                    color: rgba(255, 255, 255, 0.5);
+                    font-size: 10px;
+                }
+
+                .weiruan-starmap-empty {
+                    text-align: center;
+                    padding: 60px 20px;
+                    color: rgba(255, 255, 255, 0.5);
+                }
+
+                .weiruan-starmap-empty-icon {
+                    font-size: 64px;
+                    margin-bottom: 16px;
+                    animation: weiruan-float 3s ease-in-out infinite;
+                }
+
+                .weiruan-starmap-empty-text {
+                    font-size: 16px;
+                    margin-bottom: 8px;
+                }
+
+                .weiruan-starmap-empty-hint {
+                    font-size: 13px;
+                    color: rgba(255, 255, 255, 0.3);
+                }
+
+                .weiruan-starmap-footer {
+                    padding: 12px 24px;
+                    border-top: 1px solid rgba(102, 126, 234, 0.2);
+                    text-align: center;
+                    font-size: 12px;
+                    color: rgba(255, 255, 255, 0.4);
+                }
+
                 /* Footer */
                 .weiruan-footer {
                     padding: 12px 24px;
@@ -1510,6 +1886,7 @@
             const menu = document.createElement('div');
             menu.className = 'weiruan-menu';
             menu.innerHTML = `
+                <div class="weiruan-menu-item" data-action="starmap">🌌 ${L.starMap}</div>
                 <div class="weiruan-menu-item" data-action="history">📜 ${L.history}</div>
                 <div class="weiruan-menu-item" data-action="settings">⚙️ ${L.settings}</div>
                 <div class="weiruan-menu-item" data-action="debug">🔧 调试模式</div>
@@ -1517,7 +1894,9 @@
 
             menu.addEventListener('click', (e) => {
                 const action = e.target.getAttribute('data-action');
-                if (action === 'history') {
+                if (action === 'starmap') {
+                    UI.showStarMap();
+                } else if (action === 'history') {
                     UI.showHistoryWindow();
                 } else if (action === 'settings') {
                     UI.showSettingsWindow();
@@ -1808,6 +2187,269 @@
         removeModal: () => {
             const old = document.getElementById('weiruan-modal');
             if (old) old.remove();
+        },
+
+        showStarMap: () => {
+            const L = State.getLang();
+
+            // 移除已有的星际图
+            const existing = document.getElementById('weiruan-starmap');
+            if (existing) existing.remove();
+
+            const history = State.history;
+            const overlay = document.createElement('div');
+            overlay.id = 'weiruan-starmap';
+            overlay.className = 'weiruan-starmap-overlay';
+
+            // 生成背景星星
+            const starsHTML = Array.from({ length: 150 }, () => {
+                const x = Math.random() * 100;
+                const y = Math.random() * 100;
+                const size = Math.random() * 2 + 1;
+                const duration = Math.random() * 3 + 2;
+                const delay = Math.random() * 3;
+                return `<div class="weiruan-star" style="left:${x}%;top:${y}%;width:${size}px;height:${size}px;--duration:${duration}s;--delay:${delay}s;"></div>`;
+            }).join('');
+
+            // 统计数据
+            const typeStats = { video: 0, audio: 0, image: 0, document: 0, archive: 0, other: 0 };
+            let totalSize = 0;
+            history.forEach(h => {
+                const type = Utils.getFileType(h.name);
+                typeStats[type]++;
+                totalSize += h.size || 0;
+            });
+
+            // 生成图例
+            const legendItems = [
+                { type: 'video', label: L.video, icon: '🎬' },
+                { type: 'audio', label: L.audio, icon: '🎵' },
+                { type: 'image', label: L.image, icon: '🖼️' },
+                { type: 'document', label: L.document, icon: '📄' },
+                { type: 'archive', label: L.archive, icon: '📦' },
+                { type: 'other', label: L.other, icon: '📁' }
+            ].filter(item => typeStats[item.type] > 0);
+
+            const legendHTML = legendItems.map(item => `
+                <div class="weiruan-starmap-legend-item">
+                    <div class="weiruan-starmap-legend-dot ${item.type}"></div>
+                    <span>${item.icon} ${item.label} (${typeStats[item.type]})</span>
+                </div>
+            `).join('');
+
+            // 最近下载
+            const recentHTML = history.slice(0, 5).map(h => `
+                <div class="weiruan-starmap-recent-item">
+                    <div class="weiruan-starmap-recent-name" title="${h.name}">${Utils.getFileIcon(h.name)} ${h.name}</div>
+                    <div class="weiruan-starmap-recent-meta">${Utils.formatSize(h.size)} · ${Utils.formatDate(h.time)}</div>
+                </div>
+            `).join('');
+
+            // 空状态
+            const emptyHTML = `
+                <div class="weiruan-starmap-empty">
+                    <div class="weiruan-starmap-empty-icon">🌌</div>
+                    <div class="weiruan-starmap-empty-text">${L.noHistory}</div>
+                    <div class="weiruan-starmap-empty-hint">${L.starMapDesc}</div>
+                </div>
+            `;
+
+            overlay.innerHTML = `
+                <div class="weiruan-starmap-bg">${starsHTML}</div>
+                <div class="weiruan-starmap-container">
+                    <div class="weiruan-starmap-header">
+                        <h3 class="weiruan-starmap-title">
+                            <span class="weiruan-starmap-title-icon">🌌</span>
+                            <span>${L.starMapTitle}</span>
+                        </h3>
+                        <button class="weiruan-starmap-close" id="weiruan-starmap-close">&times;</button>
+                    </div>
+                    <div class="weiruan-starmap-stats">
+                        <div class="weiruan-starmap-stat">
+                            <span class="weiruan-starmap-stat-value">${history.length}</span>
+                            <span class="weiruan-starmap-stat-label">${L.totalDownloads}</span>
+                        </div>
+                        <div class="weiruan-starmap-stat">
+                            <span class="weiruan-starmap-stat-value">${Utils.formatSize(totalSize)}</span>
+                            <span class="weiruan-starmap-stat-label">${L.totalSize}</span>
+                        </div>
+                        <div class="weiruan-starmap-stat">
+                            <span class="weiruan-starmap-stat-value">${legendItems.length}</span>
+                            <span class="weiruan-starmap-stat-label">${L.fileTypes}</span>
+                        </div>
+                    </div>
+                    <div class="weiruan-starmap-body">
+                        <div class="weiruan-starmap-galaxy" id="weiruan-starmap-galaxy">
+                            ${history.length === 0 ? emptyHTML : '<div class="weiruan-starmap-center"></div>'}
+                        </div>
+                        <div class="weiruan-starmap-sidebar">
+                            <div class="weiruan-starmap-legend">
+                                <div class="weiruan-starmap-legend-title">🏷️ ${L.fileTypes}</div>
+                                ${legendHTML || '<div style="color:rgba(255,255,255,0.4);font-size:12px;">-</div>'}
+                            </div>
+                            <div class="weiruan-starmap-recent">
+                                <div class="weiruan-starmap-legend-title">⏱️ ${L.timeline}</div>
+                                ${recentHTML || '<div style="color:rgba(255,255,255,0.4);font-size:12px;">-</div>'}
+                            </div>
+                            <div style="margin-top:20px;padding:12px;background:rgba(102,126,234,0.1);border-radius:8px;border:1px dashed rgba(102,126,234,0.3);">
+                                <div style="color:rgba(255,255,255,0.6);font-size:11px;">💡 ${L.starSize}</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="weiruan-starmap-footer">
+                        ${L.title} v${CONFIG.VERSION} · ${L.starMapDesc}
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(overlay);
+
+            // 生成行星（如果有历史记录）
+            if (history.length > 0) {
+                UI.generatePlanets(history);
+            }
+
+            // 绑定事件
+            document.getElementById('weiruan-starmap-close').addEventListener('click', () => {
+                overlay.remove();
+            });
+
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) {
+                    overlay.remove();
+                }
+            });
+
+            // ESC 关闭
+            const escHandler = (e) => {
+                if (e.key === 'Escape') {
+                    overlay.remove();
+                    document.removeEventListener('keydown', escHandler);
+                }
+            };
+            document.addEventListener('keydown', escHandler);
+        },
+
+        generatePlanets: (history) => {
+            const galaxy = document.getElementById('weiruan-starmap-galaxy');
+            if (!galaxy) return;
+
+            const rect = galaxy.getBoundingClientRect();
+            const centerX = rect.width / 2;
+            const centerY = rect.height / 2;
+            const maxRadius = Math.min(centerX, centerY) - 40;
+
+            // 限制显示的历史数量
+            const displayHistory = history.slice(0, 30);
+
+            // 生成轨道
+            const orbitCount = Math.min(5, Math.ceil(displayHistory.length / 6));
+            for (let i = 1; i <= orbitCount; i++) {
+                const orbitRadius = (maxRadius / orbitCount) * i;
+                const orbit = document.createElement('div');
+                orbit.className = 'weiruan-starmap-orbit';
+                orbit.style.width = `${orbitRadius * 2}px`;
+                orbit.style.height = `${orbitRadius * 2}px`;
+                galaxy.appendChild(orbit);
+            }
+
+            // 计算最大文件大小（用于缩放）
+            const maxSize = Math.max(...displayHistory.map(h => h.size || 1));
+
+            // 为每个文件创建行星
+            displayHistory.forEach((file, index) => {
+                const type = Utils.getFileType(file.name);
+                const icon = Utils.getFileIcon(file.name);
+
+                // 计算行星大小（基于文件大小）
+                const fileSize = file.size || 1;
+                const sizeRatio = Math.sqrt(fileSize / maxSize);
+                const planetSize = Math.max(24, Math.min(50, 24 + sizeRatio * 26));
+
+                // 计算轨道位置
+                const orbitIndex = Math.floor(index / 6);
+                const orbitRadius = (maxRadius / orbitCount) * (orbitIndex + 1);
+                const angleOffset = (index % 6) * (360 / 6) + (orbitIndex * 30);
+
+                // 计算动画时长（外层轨道更慢）
+                const orbitDuration = 30 + orbitIndex * 15;
+
+                const planet = document.createElement('div');
+                planet.className = `weiruan-starmap-planet ${type}`;
+                planet.style.cssText = `
+                    width: ${planetSize}px;
+                    height: ${planetSize}px;
+                    --planet-font-size: ${Math.max(12, planetSize * 0.5)}px;
+                    --orbit-duration: ${orbitDuration}s;
+                    left: ${centerX}px;
+                    top: ${centerY}px;
+                    margin-left: -${planetSize / 2}px;
+                    margin-top: -${planetSize / 2}px;
+                    transform: rotate(${angleOffset}deg) translateX(${orbitRadius}px) rotate(-${angleOffset}deg);
+                `;
+
+                planet.innerHTML = `<div class="weiruan-starmap-planet-inner">${icon}</div>`;
+
+                // 添加悬停提示
+                planet.addEventListener('mouseenter', (e) => {
+                    UI.showPlanetTooltip(e, file);
+                });
+
+                planet.addEventListener('mousemove', (e) => {
+                    UI.movePlanetTooltip(e);
+                });
+
+                planet.addEventListener('mouseleave', () => {
+                    UI.hidePlanetTooltip();
+                });
+
+                galaxy.appendChild(planet);
+            });
+        },
+
+        showPlanetTooltip: (e, file) => {
+            let tooltip = document.getElementById('weiruan-starmap-tooltip');
+            if (!tooltip) {
+                tooltip = document.createElement('div');
+                tooltip.id = 'weiruan-starmap-tooltip';
+                tooltip.className = 'weiruan-starmap-tooltip';
+                document.body.appendChild(tooltip);
+            }
+
+            const L = State.getLang();
+            tooltip.innerHTML = `
+                <div class="weiruan-starmap-tooltip-name">${Utils.getFileIcon(file.name)} ${file.name}</div>
+                <div class="weiruan-starmap-tooltip-meta">
+                    <span>📦 ${Utils.formatSize(file.size)}</span>
+                    <span>📅 ${Utils.formatDate(file.time)}</span>
+                </div>
+            `;
+
+            tooltip.style.display = 'block';
+            UI.movePlanetTooltip(e);
+        },
+
+        movePlanetTooltip: (e) => {
+            const tooltip = document.getElementById('weiruan-starmap-tooltip');
+            if (tooltip) {
+                const x = e.clientX + 15;
+                const y = e.clientY + 15;
+
+                // 防止超出屏幕
+                const rect = tooltip.getBoundingClientRect();
+                const maxX = window.innerWidth - rect.width - 20;
+                const maxY = window.innerHeight - rect.height - 20;
+
+                tooltip.style.left = `${Math.min(x, maxX)}px`;
+                tooltip.style.top = `${Math.min(y, maxY)}px`;
+            }
+        },
+
+        hidePlanetTooltip: () => {
+            const tooltip = document.getElementById('weiruan-starmap-tooltip');
+            if (tooltip) {
+                tooltip.style.display = 'none';
+            }
         }
     };
 
