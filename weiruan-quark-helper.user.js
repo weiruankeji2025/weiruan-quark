@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         威软夸克助手
 // @namespace    Weiruan-Quark-Helper
-// @version      1.0.8
+// @version      1.0.9
 // @description  夸克网盘增强下载助手。支持批量下载、直链导出、aria2/IDM/cURL、下载历史、文件过滤、深色模式、快捷键操作。
 // @author       威软科技
 // @license      MIT
@@ -27,11 +27,15 @@
         API: "https://drive.quark.cn/1/clouddrive/file/download?pr=ucpro&fr=pc",
         // 分享页面下载 API (POST)
         SHARE_DOWNLOAD_API: "https://drive.quark.cn/1/clouddrive/share/sharepage/download?pr=ucpro&fr=pc",
+        // 文件夹内容列表 API
+        FOLDER_LIST_API: "https://drive.quark.cn/1/clouddrive/file/sort?pr=ucpro&fr=pc&uc_param_str=&pdir_fid=",
         UA: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch",
         DEPTH: 25,
-        VERSION: "1.0.8",
+        VERSION: "1.0.9",
         DEBUG: false, // 调试模式
         HISTORY_MAX: 100,
+        FOLDER_MAX_DEPTH: 5, // 文件夹递归最大深度
+        FOLDER_MAX_FILES: 500, // 文件夹最大文件数
         SHORTCUTS: {
             DOWNLOAD: 'ctrl+d',
             CLOSE: 'Escape'
@@ -94,7 +98,16 @@
             galaxy: '星系',
             clickToExplore: '点击星球查看详情',
             downloadTime: '下载时间',
-            starSize: '星球大小由文件大小决定'
+            starSize: '星球大小由文件大小决定',
+            folder: '文件夹',
+            scanningFolder: '正在扫描文件夹...',
+            folderContains: '文件夹包含',
+            filesInFolder: '个文件',
+            foldersSelected: '个文件夹',
+            expandingFolders: '正在展开文件夹',
+            folderTooDeep: '文件夹层级过深，已跳过部分内容',
+            folderTooMany: '文件数量过多，已达到上限',
+            includeFolders: '包含文件夹'
         },
         en: {
             title: 'Weiruan Quark Helper',
@@ -150,7 +163,16 @@
             galaxy: 'Galaxy',
             clickToExplore: 'Click a planet to see details',
             downloadTime: 'Download Time',
-            starSize: 'Planet size represents file size'
+            starSize: 'Planet size represents file size',
+            folder: 'Folder',
+            scanningFolder: 'Scanning folder...',
+            folderContains: 'Folder contains',
+            filesInFolder: 'files',
+            foldersSelected: 'folders',
+            expandingFolders: 'Expanding folders',
+            folderTooDeep: 'Folder too deep, some content skipped',
+            folderTooMany: 'Too many files, limit reached',
+            includeFolders: 'Include Folders'
         }
     };
 
@@ -373,6 +395,110 @@
             });
         },
 
+        // GET 请求
+        get: (url) => {
+            return new Promise((resolve, reject) => {
+                GM_xmlhttpRequest({
+                    method: "GET",
+                    url: url,
+                    headers: {
+                        "User-Agent": CONFIG.UA,
+                        "Cookie": document.cookie
+                    },
+                    responseType: 'json',
+                    withCredentials: true,
+                    onload: res => {
+                        if (res.status === 200) {
+                            resolve(res.response);
+                        } else {
+                            reject(res);
+                        }
+                    },
+                    onerror: err => reject(err)
+                });
+            });
+        },
+
+        // 获取文件夹内容列表
+        getFolderContents: async (fid, page = 1, pageSize = 100) => {
+            const url = `${CONFIG.FOLDER_LIST_API}${fid}&_page=${page}&_size=${pageSize}&_sort=file_type:asc,updated_at:desc`;
+            try {
+                const res = await Utils.get(url);
+                if (res && res.code === 0 && res.data && res.data.list) {
+                    return {
+                        list: res.data.list,
+                        total: res.metadata?._total || res.data.list.length,
+                        hasMore: res.data.list.length >= pageSize
+                    };
+                }
+                return { list: [], total: 0, hasMore: false };
+            } catch (e) {
+                Utils.log('获取文件夹内容失败:', e);
+                return { list: [], total: 0, hasMore: false };
+            }
+        },
+
+        // 递归获取文件夹内所有文件
+        getAllFilesInFolder: async (fid, folderName = '', depth = 0, onProgress = null) => {
+            const allFiles = [];
+            const L = State.getLang();
+
+            if (depth >= CONFIG.FOLDER_MAX_DEPTH) {
+                Utils.log('达到最大递归深度:', depth);
+                return { files: allFiles, warning: 'depth' };
+            }
+
+            let page = 1;
+            let hasMore = true;
+            let warning = null;
+
+            while (hasMore && allFiles.length < CONFIG.FOLDER_MAX_FILES) {
+                const result = await Utils.getFolderContents(fid, page, 100);
+
+                for (const item of result.list) {
+                    if (allFiles.length >= CONFIG.FOLDER_MAX_FILES) {
+                        warning = 'count';
+                        break;
+                    }
+
+                    const isDir = item.dir === true || item.is_dir === true ||
+                                  item.file_type === 0 || item.obj_category === 'folder';
+
+                    if (isDir) {
+                        // 递归获取子文件夹
+                        const subPath = folderName ? `${folderName}/${item.file_name}` : item.file_name;
+                        if (onProgress) {
+                            onProgress(`${L.scanningFolder} ${subPath}`);
+                        }
+                        const subResult = await Utils.getAllFilesInFolder(
+                            item.fid,
+                            subPath,
+                            depth + 1,
+                            onProgress
+                        );
+                        allFiles.push(...subResult.files);
+                        if (subResult.warning) warning = subResult.warning;
+                    } else {
+                        // 添加文件，保留文件夹路径
+                        allFiles.push({
+                            fid: item.fid,
+                            name: item.file_name,
+                            file_name: item.file_name,
+                            size: item.size || 0,
+                            isDir: false,
+                            folderPath: folderName,
+                            fullPath: folderName ? `${folderName}/${item.file_name}` : item.file_name
+                        });
+                    }
+                }
+
+                hasMore = result.hasMore && allFiles.length < CONFIG.FOLDER_MAX_FILES;
+                page++;
+            }
+
+            return { files: allFiles, warning };
+        },
+
         formatSize: (bytes) => {
             if (bytes === 0) return '0 B';
             const k = 1024, i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -420,14 +546,22 @@
         generateAria2Commands: (files) => {
             return files.map(f => {
                 const ua = CONFIG.UA;
-                return `aria2c -c -x 16 -s 16 "${f.download_url}" -o "${f.file_name}" -U "${ua}" --header="Cookie: ${document.cookie}"`;
+                // 如果有文件夹路径，使用完整路径
+                const outputPath = f.fullPath || f.file_name;
+                // 如果有子目录，先创建目录
+                const dirCmd = f.folderPath ? `mkdir -p "${f.folderPath}" && ` : '';
+                return `${dirCmd}aria2c -c -x 16 -s 16 "${f.download_url}" -o "${outputPath}" -U "${ua}" --header="Cookie: ${document.cookie}"`;
             }).join('\n\n');
         },
 
         generateCurlCommands: (files) => {
             return files.map(f => {
                 const ua = CONFIG.UA;
-                return `curl -L -C - "${f.download_url}" -o "${f.file_name}" -A "${ua}" -b "${document.cookie}"`;
+                // 如果有文件夹路径，使用完整路径
+                const outputPath = f.fullPath || f.file_name;
+                // 如果有子目录，先创建目录
+                const dirCmd = f.folderPath ? `mkdir -p "${f.folderPath}" && ` : '';
+                return `${dirCmd}curl -L -C - "${f.download_url}" -o "${outputPath}" -A "${ua}" -b "${document.cookie}"`;
             }).join('\n\n');
         },
 
@@ -876,13 +1010,54 @@
                 console.log('[威软夸克助手] 找到的原始文件:', files);
                 console.log('[威软夸克助手] 文件详情:', files.map(f => ({name: f.name, isDir: f.isDir, fid: f.fid})));
 
-                const beforeFilterCount = files.length;
-                files = files.filter(f => !f.isDir);
-                console.log(`[威软夸克助手] 过滤文件夹后: ${beforeFilterCount} -> ${files.length}`);
+                // 分离文件和文件夹
+                const folders = files.filter(f => f.isDir);
+                let regularFiles = files.filter(f => !f.isDir);
+                console.log(`[威软夸克助手] 文件: ${regularFiles.length}, 文件夹: ${folders.length}`);
+
+                // 如果有文件夹，展开获取所有文件
+                if (folders.length > 0) {
+                    if (btn) {
+                        btn.innerHTML = `<span class="weiruan-spinner"></span> ${L.expandingFolders}...`;
+                        btn.disabled = true;
+                    }
+
+                    let folderWarning = null;
+                    for (const folder of folders) {
+                        Utils.toast(`${L.scanningFolder} ${folder.name}`, 'info');
+                        const result = await Utils.getAllFilesInFolder(
+                            folder.fid,
+                            folder.name,
+                            0,
+                            (msg) => {
+                                if (btn) btn.innerHTML = `<span class="weiruan-spinner"></span> ${msg}`;
+                            }
+                        );
+                        regularFiles.push(...result.files);
+                        if (result.warning) folderWarning = result.warning;
+
+                        // 检查是否超过文件数限制
+                        if (regularFiles.length >= CONFIG.FOLDER_MAX_FILES) {
+                            folderWarning = 'count';
+                            break;
+                        }
+                    }
+
+                    // 显示警告
+                    if (folderWarning === 'depth') {
+                        Utils.toast(L.folderTooDeep, 'info');
+                    } else if (folderWarning === 'count') {
+                        Utils.toast(L.folderTooMany, 'info');
+                    }
+
+                    console.log(`[威软夸克助手] 展开文件夹后共 ${regularFiles.length} 个文件`);
+                }
+
+                files = regularFiles;
 
                 // 应用文件类型过滤
                 if (filterType !== 'all') {
-                    files = files.filter(f => Utils.getFileType(f.name) === filterType);
+                    files = files.filter(f => Utils.getFileType(f.name || f.file_name) === filterType);
                 }
 
                 if (files.length === 0) {
@@ -947,8 +1122,27 @@
                 }
 
                 if (res && res.code === 0 && res.data && res.data.length > 0) {
-                    State.addHistory(res.data);
-                    UI.showResultWindow(res.data);
+                    // 创建 fid 到原始文件信息的映射，保留文件夹路径
+                    const fileInfoMap = new Map();
+                    files.forEach(f => {
+                        fileInfoMap.set(f.fid, {
+                            folderPath: f.folderPath,
+                            fullPath: f.fullPath
+                        });
+                    });
+
+                    // 将文件夹路径信息合并到 API 返回结果中
+                    const enrichedData = res.data.map(item => {
+                        const info = fileInfoMap.get(item.fid);
+                        return {
+                            ...item,
+                            folderPath: info?.folderPath || '',
+                            fullPath: info?.fullPath || item.file_name
+                        };
+                    });
+
+                    State.addHistory(enrichedData);
+                    UI.showResultWindow(enrichedData);
                 } else {
                     Utils.toast(`${L.parseError}: ${res?.message || '未获取到下载链接'}`, 'error');
                 }
@@ -1960,13 +2154,18 @@
             const fileListHTML = data.map((f, index) => {
                 const icon = Utils.getFileIcon(f.file_name);
                 const safeUrl = f.download_url.replace(/"/g, '&quot;');
+                // 显示文件夹路径
+                const folderPathHTML = f.folderPath
+                    ? `<span style="color:var(--weiruan-text-secondary);font-size:11px;margin-left:4px;">📁 ${f.folderPath}/</span>`
+                    : '';
 
                 return `
                 <div class="weiruan-file-item" data-type="${Utils.getFileType(f.file_name)}">
                     <div class="weiruan-file-info">
-                        <div class="weiruan-file-name" title="${f.file_name}">
+                        <div class="weiruan-file-name" title="${f.fullPath || f.file_name}">
                             <span>${icon}</span>
                             <span>${f.file_name}</span>
+                            ${folderPathHTML}
                         </div>
                         <div class="weiruan-file-meta">${Utils.formatSize(f.size)}</div>
                     </div>
